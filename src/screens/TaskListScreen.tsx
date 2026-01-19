@@ -1,55 +1,73 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { TaskCard } from '../components/TaskCard';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { Button } from '../components/Button';
-import { MOCK_TASKS, Task } from '../data/mockData';
 import { COLORS, SPACING } from '../constants/theme';
-import { LogOut, PlusCircle } from 'lucide-react-native';
-import { apiService } from '../services/api';
+import { PlusCircle } from 'lucide-react-native';
+import { apiService, TaskData } from '../services/api';
 import { storageService } from '../services/storage';
 
-interface TaskListScreenProps {
-    navigation: NativeStackNavigationProp<any>;
-}
+import { RootStackParamList } from '../navigation/AppNavigator';
 
-export const TaskListScreen: React.FC<TaskListScreenProps> = ({ navigation }) => {
+type Props = NativeStackScreenProps<RootStackParamList, 'TaskList'>;
+
+export const TaskListScreen = ({ navigation, route }: Props) => {
     const [isLoading, setIsLoading] = useState(false);
-    const [tenantCode, setTenantCode] = useState('TENANT001'); // Default fallback
+    const [tenantCode, setTenantCode] = useState('');
+    const [userId, setUserId] = useState<number>(0);
+    const [tasks, setTasks] = useState<TaskData[]>(route.params?.tasks || []);
 
-    useEffect(() => {
-        loadSettings();
-    }, []);
-
-    const loadSettings = async () => {
-        const settings = await storageService.getSettings();
-        if (settings.tenantCodeInput) {
-            setTenantCode(settings.tenantCodeInput);
-        }
-    };
-
-    const handleTaskPress = async (task: Task) => {
+    const loadSettingsAndTasks = useCallback(async () => {
         setIsLoading(true);
         try {
             const settings = await storageService.getSettings();
-            if (!settings.urlApis) {
-                Alert.alert('Erro', 'URL de serviços não configurada.');
-                return;
+            if (settings.tenantCodeInput) {
+                setTenantCode(settings.tenantCodeInput);
             }
+            if (settings.userId) {
+                setUserId(settings.userId);
 
-            // Extract numeric ID from "TASK-001" or similar
-            const idMatch = task.id.match(/\d+/);
-            const numericId = idMatch ? parseInt(idMatch[0], 10) : 0;
+                // If we didn't get tasks from params (or if we want to refresh), fetch them
+                if (!route.params?.tasks || tasks.length === 0) {
+                    await fetchTasks(settings.tenantCodeInput, settings.userId);
+                }
+            }
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [route.params?.tasks]);
 
-            // Mocking user ID as 1 as per Login logic
-            const userId = settings.userId || 1;
+    useFocusEffect(
+        useCallback(() => {
+            loadSettingsAndTasks();
+        }, [loadSettingsAndTasks])
+    );
 
-            // Start (or resume) task
+    const fetchTasks = async (tCode: string, uId: number) => {
+        try {
+            const response = await apiService.getOpenTasks(tCode, uId);
+            if (response.Ok && response.TarefasLivres) {
+                setTasks(response.TarefasLivres);
+            } else if (response.Ok && response.TarefaUsuario) {
+                // Should arguably not happen here if logic is correct, but if it does, navigate
+                // But typically this endpoint returns TarefasLivres if no active task.
+            }
+        } catch (error) {
+            console.error('Failed to fetch tasks', error);
+        }
+    };
+
+    const handleTaskPress = async (task: TaskData) => {
+        setIsLoading(true);
+        try {
             const response = await apiService.startTask(
                 tenantCode,
-                numericId,
+                task.IdTarefa,
                 userId,
-                task.operationName
+                task.NomeOperacao
             );
 
             if (response.Ok && response.DadosTarefa) {
@@ -70,14 +88,34 @@ export const TaskListScreen: React.FC<TaskListScreenProps> = ({ navigation }) =>
         }
     };
 
-    const handleGenerateTask = (type: 'INVENTÁRIO' | 'ENDEREÇAMENTO') => {
-        // Here we would call an API/Endpoint to generate a new task
-        // apiService.generateTask(...)
-        // For now, alerting not implemented or simulation
-        Alert.alert('Aviso', `Gerar tarefa de ${type} não implementado no fluxo atual.`);
+    const handleLogout = async () => {
+        Alert.alert(
+            'Sair',
+            'Deseja realmente sair do coletor?',
+            [
+                { text: 'Não', style: 'cancel' },
+                {
+                    text: 'Sim',
+                    onPress: async () => {
+                        setIsLoading(true);
+                        try {
+                            await apiService.logout(tenantCode, userId);
+                            // Clear user session if needed, or just navigate back
+                            navigation.replace('Login');
+                        } catch (error) {
+                            Alert.alert('Erro', 'Erro ao realizar logout');
+                            navigation.replace('Login'); // Force exit anyway?
+                        } finally {
+                            setIsLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
 
-        // If we wanted to simulate:
-        // handleTaskPress({ id: 'TASK-NEW', operationName: type, ... } as Task);
+    const handleGenerateTask = (type: 'INVENTÁRIO' | 'ENDEREÇAMENTO') => {
+        Alert.alert('Aviso', `Gerar tarefa de ${type} não implementado no fluxo atual.`);
     };
 
     const renderHeader = () => (
@@ -101,6 +139,12 @@ export const TaskListScreen: React.FC<TaskListScreenProps> = ({ navigation }) =>
         </View>
     );
 
+    // Adapt TaskData to the visualization expected by TaskCard?
+    // Or update TaskCard. For now, let's map on the fly or update TaskCard later.
+    // The current TaskCard expects { id, title, type, status, priority }.
+    // Our TaskData has { IdTarefa, DescrTarefa, NomeOperacao, StatusTarefa ... }
+    // We will do a quick mapping here for the renderItem.
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
@@ -108,7 +152,7 @@ export const TaskListScreen: React.FC<TaskListScreenProps> = ({ navigation }) =>
             </View>
 
             <View style={styles.tenantBar}>
-                <Text style={styles.tenantText}>Tenant: {tenantCode}</Text>
+                <Text style={styles.tenantText}>Tenant: {tenantCode} | Usuário: {userId}</Text>
             </View>
 
             {isLoading && (
@@ -118,31 +162,34 @@ export const TaskListScreen: React.FC<TaskListScreenProps> = ({ navigation }) =>
             )}
 
             <FlatList
-                data={MOCK_TASKS}
-                keyExtractor={(item) => item.id}
+                data={tasks}
+                keyExtractor={(item) => item.IdTarefa.toString()}
                 ListHeaderComponent={renderHeader}
                 renderItem={({ item }) => (
                     <TouchableOpacity onPress={() => handleTaskPress(item)}>
-                        <TaskCard task={item} />
+                        {/* Temporary Card - Inline or mapped */}
+                        <View style={styles.taskCard}>
+                            <View style={styles.taskHeader}>
+                                <Text style={styles.taskType}>{item.NomeOperacao}</Text>
+                                <Text style={styles.taskId}>#{item.IdTarefa}</Text>
+                            </View>
+                            <Text style={styles.taskDesc}>{item.DescrTarefa || item.DescricaoTarefa}</Text>
+                            <Text style={styles.taskStatus}>{item.StatusTarefa || 'PENDENTE'}</Text>
+                        </View>
                     </TouchableOpacity>
                 )}
+                ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 20, color: '#666' }}>Nenhuma tarefa disponível.</Text>}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
             />
 
             <View style={styles.footer}>
-                <Button
-                    title="Voltar"
-                    variant="secondary"
-                    onPress={() => navigation.goBack()}
-                    style={{ flex: 1, marginRight: SPACING.sm, backgroundColor: '#34495E' }}
-                />
+                {/* Simplified footer options */}
                 <Button
                     title="Sair do Coletor"
                     variant="danger"
-                    onPress={() => navigation.replace('Login')}
-                    style={{ flex: 1, marginLeft: SPACING.sm }}
-
+                    onPress={handleLogout}
+                    style={{ flex: 1 }}
                 />
             </View>
         </SafeAreaView>
@@ -207,7 +254,9 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        backgroundColor: COLORS.primary,
+        backgroundColor: COLORS.surface, // Changed to surface for better contrast with red button
+        borderTopWidth: 1,
+        borderTopColor: COLORS.border,
         padding: SPACING.md,
         flexDirection: 'row',
     },
@@ -218,5 +267,44 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 10,
+    },
+    taskCard: {
+        backgroundColor: COLORS.surface,
+        padding: SPACING.md,
+        borderRadius: 8,
+        marginBottom: SPACING.sm,
+        borderLeftWidth: 4,
+        borderLeftColor: COLORS.primary,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    taskHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: SPACING.xs,
+    },
+    taskType: {
+        fontWeight: 'bold',
+        color: COLORS.primary,
+        fontSize: 14,
+    },
+    taskId: {
+        color: COLORS.textLight,
+        fontSize: 12,
+    },
+    taskDesc: {
+        color: COLORS.text,
+        fontSize: 14,
+        marginBottom: SPACING.xs,
+    },
+    taskStatus: {
+        fontSize: 12,
+        color: COLORS.textLight,
+        fontWeight: '600',
+        textTransform: 'uppercase',
     }
 });
+

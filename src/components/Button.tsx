@@ -7,6 +7,7 @@ interface ButtonProps {
     onPress: () => void;
     variant?: 'primary' | 'secondary' | 'outline' | 'danger' | 'success';
     isLoading?: boolean;
+    disabled?: boolean;
     style?: ViewStyle;
 }
 
@@ -15,6 +16,7 @@ export const Button: React.FC<ButtonProps> = ({
     onPress,
     variant = 'primary',
     isLoading = false,
+    disabled = false,
     style
 }) => {
     const getBackgroundColor = () => {
@@ -44,7 +46,7 @@ export const Button: React.FC<ButtonProps> = ({
             ]}
             onPress={onPress}
             activeOpacity={0.8}
-            disabled={isLoading}
+            disabled={isLoading || disabled}
         >
             {isLoading ? (
                 <ActivityIndicator color={getTextColor()} />

@@ -1,5 +1,5 @@
 {
-  "name": "datacollectorapp",
+  "name": "coletor_qrcode",
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {

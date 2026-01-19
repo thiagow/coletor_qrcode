@@ -6,6 +6,8 @@ import { Input } from '../components/Input';
 import { COLORS, SPACING, FONTS } from '../constants/theme';
 import { Settings, Info } from 'lucide-react-native';
 import { storageService } from '../services/storage';
+import { apiService } from '../services/api';
+import { ActivityIndicator } from 'react-native';
 
 interface LoginScreenProps {
     navigation: NativeStackNavigationProp<any>;
@@ -15,13 +17,49 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     const [userCode, setUserCode] = useState('');
     const [password, setPassword] = useState('');
 
+    const [isLoading, setIsLoading] = useState(false);
+
     const handleLogin = async () => {
-        // Mimic login
-        if (userCode && password) {
-            // In a real app, validation would happen here.
-            // We save a mock User ID (e.g. 1) as required by the prompt's API spec.
-            await storageService.saveUserId(1);
-            navigation.replace('TaskList');
+        if (!userCode || !password) {
+            alert('Por favor, preencha código e senha.');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const response = await apiService.login(userCode, password);
+
+            if (response.Ok) {
+                // Save session info
+                if (response.IdUsuario) {
+                    await storageService.saveUserId(response.IdUsuario);
+                }
+
+                // If there's an active task, go straight to execution
+                if (response.TarefaUsuario) {
+                    // Need tenantCode. Assuming it comes in response OR we used the one from settings.
+                    // The response has tenantCode according to user example.
+                    const tCode = response.tenantCode || await (await storageService.getSettings()).tenantCodeInput;
+
+                    navigation.replace('TaskExecution', {
+                        taskData: response.TarefaUsuario,
+                        tenantCode: tCode || 'DEFAULT',
+                        userId: response.IdUsuario || 0
+                    });
+                } else {
+                    // Otherwise go to list passed with params
+                    navigation.replace('TaskList', {
+                        tasks: response.TarefasLivres || []
+                    });
+                }
+            } else {
+                alert(response.MensErro || 'Erro ao realizar login.');
+            }
+        } catch (error) {
+            console.error(error);
+            alert('Erro de comunicação ao logar.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -58,7 +96,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
                             title="ENTRAR"
                             onPress={handleLogin}
                             style={styles.loginButton}
+                            disabled={isLoading}
                         />
+
+                        {isLoading && <ActivityIndicator style={{ marginTop: 20 }} color={COLORS.primary} />}
+
 
                         <TouchableOpacity
                             style={styles.settingsLink}

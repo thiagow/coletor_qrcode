@@ -10,7 +10,7 @@ import { TaskData } from '../services/api';
 export type RootStackParamList = {
     Login: undefined;
     Settings: undefined;
-    TaskList: undefined;
+    TaskList: { tasks?: TaskData[] } | undefined;
     TaskExecution: {
         taskData: TaskData;
         tenantCode: string;
