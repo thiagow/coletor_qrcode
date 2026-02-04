@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -14,6 +15,7 @@ interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
+    const insets = useSafeAreaInsets();
     const [userCode, setUserCode] = useState('');
     const [password, setPassword] = useState('');
 
@@ -35,8 +37,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
                     await storageService.saveUserId(response.IdUsuario);
                 }
 
-                // If there's an active task, go straight to execution
-                if (response.TarefaUsuario) {
+                // If there's an active task (checking IdTarefa to ensure it's not empty object), go straight to execution
+                if (response.TarefaUsuario && response.TarefaUsuario.IdTarefa) {
                     // Need tenantCode. Assuming it comes in response OR we used the one from settings.
                     // The response has tenantCode according to user example.
                     const tCode = response.tenantCode || await (await storageService.getSettings()).tenantCodeInput;
@@ -57,14 +59,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
             }
         } catch (error) {
             console.error(error);
-            alert('Erro de comunicação ao logar.');
+            const errString = error instanceof Error ? error.message : String(error);
+            alert(`Erro de comunicação:\n${errString}`);
         } finally {
             setIsLoading(false);
         }
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={styles.keyboardView}
@@ -115,13 +118,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
                         <Info size={20} color={COLORS.primary} style={{ marginRight: 8 }} />
                         <View>
                             <Text style={styles.demoTitle}>Modo de Demonstração</Text>
-                            <Text style={styles.demoSub}>Use: OP001 / 123456</Text>
+                            <Text style={styles.demoSub}>Tenant: PetitaLegado</Text>
+                            <Text style={styles.demoSub}>Use: 32 / 123456</Text>
                         </View>
                     </View>
 
                 </ScrollView>
             </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
     );
 };
 

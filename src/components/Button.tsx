@@ -1,5 +1,5 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, View } from 'react-native';
 import { COLORS, SPACING, FONTS } from '../constants/theme';
 
 interface ButtonProps {
@@ -9,6 +9,7 @@ interface ButtonProps {
     isLoading?: boolean;
     disabled?: boolean;
     style?: ViewStyle;
+    icon?: React.ReactNode;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -17,7 +18,8 @@ export const Button: React.FC<ButtonProps> = ({
     variant = 'primary',
     isLoading = false,
     disabled = false,
-    style
+    style,
+    icon
 }) => {
     const getBackgroundColor = () => {
         if (variant === 'primary') return COLORS.primary;
@@ -51,7 +53,10 @@ export const Button: React.FC<ButtonProps> = ({
             {isLoading ? (
                 <ActivityIndicator color={getTextColor()} />
             ) : (
-                <Text style={[styles.text, { color: getTextColor() }]}>{title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {icon && <View style={{ marginRight: 8 }}>{icon}</View>}
+                    <Text style={[styles.text, { color: getTextColor() }]}>{title}</Text>
+                </View>
             )}
         </TouchableOpacity>
     );

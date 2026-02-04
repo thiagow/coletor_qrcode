@@ -1,18 +1,30 @@
 import { storageService } from './storage';
+import SHA1 from 'crypto-js/sha1';
 
-// Placeholder for dayToken generation logic
-// The user specified: "hash simples gerado em função do dia/mês/ano corrente"
-// We will implement a basic version for now.
-
+// Token generation logic based on SQL provided:
+// Declare @Key Varchar(30) = 'MPC2_'+Convert(Varchar(10), GetDate(), 112)+'_18531874000130';
+// Select Convert(Varchar(40), HashBytes('SHA1', @Key), 2)
 const generateDayToken = (): string => {
     const today = new Date();
-    const day = today.getDate();
-    const month = today.getMonth() + 1;
     const year = today.getFullYear();
+    // Month is 0-indexed in JS, so add 1. Pad with 0.
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
 
-    // Simple mock hash: "D{day}M{month}Y{year}-TOKEN"
-    // This is a PLACEHOLDER until specific hash logic is provided
-    return `D${day}M${month}Y${year}-TOKEN`;
+    // SQL style 112 is YYYYMMDD
+    const dateStr = `${year}${month}${day}`;
+
+    // Fixed suffix as per requirements
+    const fixedSuffix = '_18531874000130';
+
+    // Construct the key: MPC2_YYYYMMDD_18531874000130
+    const key = `MPC2_${dateStr}${fixedSuffix}`;
+
+    // Generate SHA1 hash and convert to Hex string (uppercase)
+    const hash = SHA1(key).toString().toUpperCase();
+
+    console.log(`Generated Token - Key: ${key}, Hash: ${hash}`);
+    return hash;
 };
 
 const getBaseUrl = async (): Promise<string> => {
@@ -52,13 +64,15 @@ export interface ApiResponse<T = any> {
     ApelidoFuncionario?: string;
     TarefaUsuario?: T | null;
     TarefasLivres?: T[];
+    // Validation specific fields
+    tenatCode?: string;
 }
 
 export const apiService = {
     validateTenant: async (urlBase: string, tenantName: string) => {
         const cleanUrl = urlBase.replace(/\/$/, '');
         const dayToken = generateDayToken();
-        const fullUrl = `${cleanUrl}/api/valida_tenant/by_name/tn=${tenantName}/t=${dayToken}`;
+        const fullUrl = `${cleanUrl}/valida_tenant/by_name/tn=${tenantName}/t=${dayToken}`;
 
         console.log('Validating tenant with URL:', fullUrl);
 
@@ -86,50 +100,33 @@ export const apiService = {
     login: async (userCode: string, password: string): Promise<ApiResponse<TaskData>> => {
         const baseUrl = await getBaseUrl();
         const { tenantCodeInput: savedTenant } = await storageService.getSettings();
-        // The user didn't specify the login endpoint URL in the latest message, 
-        // but in previous context or implicit standard. 
-        // Assuming /api/coletor/login based on pattern or previous knowledge? 
-        // User said: "Login do funcionário: Essa chamada já foi detalhada anteriormente"
-        // Let's assume /api/coletor/login or similar. 
-        // WAIT, if it was detailed previously, I should recall or check.
-        // Checking previous conversation context not strictly available in full detail, 
-        // but standard pattern suggests /api/coletor/login.
-        // However, I will check if I can find it in the prompt history. 
-        // Actually, looking at "Conversation f426..." summaries, it doesn't explicitly mention the URL.
-        // BUT, looking at the user request "Login do funcionário: Essa chamada já foi detalhada anteriormente",
-        // implying I should know.
-        // Let's assume it is a POST to `{urlApis}/api/coletor/login` with body `{ userCode, password, tenantCode }`?
-        // OR maybe the user provided it in a previous turn I can't see?
-        // Safer bet: The user described the RESPONSE structure today.
-        // I will implement a placeholder URL and ask/verify if it fails, OR assuming standard `api/coletor/login`.
-        // Actually, let's look at the structure of other calls: `/api/coletor/tarefa/...`.
-        // I'll use `/api/coletor/login` for now.
 
-        // Actually, re-reading the PROMPT from Step 61: "Login do funcionário: Essa chamada já foi detalhada anteriormente".
-        // In the VERY FIRST prompt today, I didn't see the login details.
-        // However, I will implement it.
-
-        const url = `${baseUrl}/api/coletor/login`;
+        const url = `${baseUrl}/coletor/login`;
 
         try {
-            // Note: Password/UserCode param names might be different (e.g. codigo, senha).
-            // I will use 'codigo' and 'senha' as common Portuguese fields, or 'userCode'/'password'.
-            // Given the other fields are mixed (tenantCode, IdUsuario), let's guess `codigo` and `senha` or `login`/`password`.
-            // Let's try `codigo` and `senha` which is common in BR legacy systems, or follows the pattern.
-            // Actually, let's use the `userCode` and `password` as requested in the LoginScreen logic,
-            // but mapped to what the API likely expects.
-            // I'll leave them as `login` and `senha` for now.
+            const body = {
+                tenantName: savedTenant,
+                codFuncionario: userCode,
+                password: password
+            };
+
+            console.log('Logging in with body:', JSON.stringify(body));
 
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tenantCode: savedTenant, // assuming tenant is needed
-                    login: userCode,
-                    senha: password
-                })
+                body: JSON.stringify(body)
             });
-            return await response.json();
+
+            const data = await response.json();
+
+            // Se o login for bem sucedido e retornar tenantCode, salvamos para uso futuro
+            if (data.Ok && data.tenantCode) {
+                await storageService.saveValidatedTenantCode(data.tenantCode);
+                console.log('Login success! Saved tenantCode:', data.tenantCode);
+            }
+
+            return data;
         } catch (error) {
             console.error('Error logging in:', error);
             throw error;
@@ -138,7 +135,7 @@ export const apiService = {
 
     logout: async (tenantCode: string, idUsuario: number): Promise<ApiResponse> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/logout`;
+        const url = `${baseUrl}/coletor/logout`;
 
         try {
             const response = await fetch(url, {
@@ -155,7 +152,7 @@ export const apiService = {
 
     getOpenTasks: async (tenantCode: string, idUsuario: number): Promise<ApiResponse<TaskData>> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/TarefasLivresUsuario`;
+        const url = `${baseUrl}/coletor/TarefasLivresUsuario`;
 
         try {
             const response = await fetch(url, {
@@ -163,7 +160,7 @@ export const apiService = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     tenantCode,
-                    idTarefa: 0, // Sending 0 or null as per "blank or null" implication for list
+                    idTarefa: 0,
                     idUsuario
                 })
             });
@@ -176,7 +173,7 @@ export const apiService = {
 
     startTask: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse<TaskData>> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/tarefa/inicia`;
+        const url = `${baseUrl}/coletor/tarefa/inicia`;
 
         try {
             const response = await fetch(url, {
@@ -193,7 +190,7 @@ export const apiService = {
 
     pauseTask: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/tarefa/pausa`;
+        const url = `${baseUrl}/coletor/tarefa/pausa`;
 
         try {
             const response = await fetch(url, {
@@ -210,7 +207,7 @@ export const apiService = {
 
     getTaskData: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string, codigoBarras?: string): Promise<ApiResponse<TaskData>> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/tarefa/dados`;
+        const url = `${baseUrl}/coletor/tarefa/dados`;
 
         try {
             const body: any = { tenantCode, idTarefa, idUsuario, nomeOperacao };
@@ -232,7 +229,7 @@ export const apiService = {
 
     finishTask: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/tarefa/encerra`;
+        const url = `${baseUrl}/coletor/tarefa/encerra`;
 
         try {
             const response = await fetch(url, {
@@ -249,7 +246,7 @@ export const apiService = {
 
     cancelTask: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/tarefa/cancela`;
+        const url = `${baseUrl}/coletor/tarefa/cancela`;
 
         try {
             const response = await fetch(url, {
@@ -266,7 +263,7 @@ export const apiService = {
 
     generateNewBox: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse<TaskData>> => {
         const baseUrl = await getBaseUrl();
-        const url = `${baseUrl}/api/coletor/tarefa/novacaixa`;
+        const url = `${baseUrl}/coletor/tarefa/geracaixaembalagem`;
 
         try {
             const response = await fetch(url, {
@@ -277,6 +274,129 @@ export const apiService = {
             return await response.json();
         } catch (error) {
             console.error('Error generating new box:', error);
+            throw error;
+        }
+    },
+
+    readBarcode: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string, codigoBarras: string): Promise<ApiResponse<TaskData>> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/lecodbarras`;
+
+        try {
+            console.log('Sending Barcode Request:', { url, tenantCode, idTarefa, idUsuario, nomeOperacao, codigoBarras });
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idTarefa, idUsuario, nomeOperacao, codBarras: codigoBarras })
+            });
+            const data = await response.json();
+            console.log('Barcode/API Response:', data);
+            return data;
+        } catch (error) {
+            console.error('Error reading barcode:', error);
+            throw error;
+        }
+    },
+
+    createInventory: async (tenantCode: string, idUsuario: number): Promise<ApiResponse<TaskData>> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/gerainventario`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idUsuario })
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error creating inventory:', error);
+            throw error;
+        }
+    },
+
+    createAddressing: async (tenantCode: string, idUsuario: number): Promise<ApiResponse<TaskData>> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/geraenderecamento`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idUsuario })
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error creating addressing:', error);
+            throw error;
+        }
+    },
+
+    finishInventory: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/encerrainventario`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idTarefa, idUsuario, nomeOperacao })
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error finishing inventory:', error);
+            throw error;
+        }
+    },
+
+    finishAddressing: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/encerraenderecamento`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idTarefa, idUsuario, nomeOperacao })
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error finishing addressing:', error);
+            throw error;
+        }
+    },
+
+    cancelInventory: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/cancelainventario`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idTarefa, idUsuario, nomeOperacao })
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error canceling inventory:', error);
+            throw error;
+        }
+    },
+
+    cancelAddressing: async (tenantCode: string, idTarefa: number, idUsuario: number, nomeOperacao: string): Promise<ApiResponse> => {
+        const baseUrl = await getBaseUrl();
+        const url = `${baseUrl}/coletor/tarefa/cancelaenderecamento`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenantCode, idTarefa, idUsuario, nomeOperacao })
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error canceling addressing:', error);
             throw error;
         }
     }

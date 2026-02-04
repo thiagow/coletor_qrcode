@@ -3,22 +3,25 @@ import {
     View,
     Text,
     StyleSheet,
-    SafeAreaView,
     TextInput,
     TouchableOpacity,
     Alert,
     ActivityIndicator,
-    Keyboard
+    Keyboard,
+    Modal
 } from 'react-native';
+import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../constants/theme';
+import { Camera, X } from 'lucide-react-native';
 import { apiService, TaskData } from '../services/api';
 import { storageService } from '../services/storage';
 
 type RootStackParamList = {
     Login: undefined;
-    TaskList: undefined;
+    TaskList: { tasks?: TaskData[] } | undefined;
     TaskExecution: {
         taskData: TaskData;
         tenantCode: string;
@@ -35,11 +38,15 @@ interface Props {
 }
 
 export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
+    const insets = useSafeAreaInsets();
     const { taskData: initialTaskData, tenantCode, userId } = route.params;
     const [taskData, setTaskData] = useState<TaskData>(initialTaskData);
     const [barcode, setBarcode] = useState('');
     const [message, setMessage] = useState<{ text: string; isError: boolean } | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [permission, requestPermission] = useCameraPermissions();
+    const [isCameraVisible, setIsCameraVisible] = useState(false);
+    const [scanned, setScanned] = useState(false);
     const inputRef = useRef<TextInput>(null);
 
     useEffect(() => {
@@ -61,7 +68,7 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
         setMessage(null);
 
         try {
-            const response = await apiService.getTaskData(
+            const response = await apiService.readBarcode(
                 tenantCode,
                 taskData.IdTarefa,
                 userId,
@@ -100,11 +107,24 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             );
 
             if (response.Ok) {
-                navigation.goBack(); // Go back to List
+                // Fetch updated tasks before navigating back
+                const tasksResponse = await apiService.getOpenTasks(tenantCode, userId);
+
+                // Reset navigation to TaskList with updated tasks
+                navigation.reset({
+                    index: 0,
+                    routes: [
+                        {
+                            name: 'TaskList',
+                            params: { tasks: tasksResponse.TarefasLivres || [] }
+                        },
+                    ],
+                });
             } else {
                 setMessage({ text: response.MensErro || 'Erro ao pausar', isError: true });
             }
         } catch (error) {
+            console.error('Pause error:', error);
             setMessage({ text: 'Erro ao conectar', isError: true });
         } finally {
             setIsLoading(false);
@@ -122,12 +142,32 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                     onPress: async () => {
                         setIsLoading(true);
                         try {
-                            const response = await apiService.finishTask(
-                                tenantCode,
-                                taskData.IdTarefa,
-                                userId,
-                                taskData.NomeOperacao
-                            );
+                            const operationType = taskData.NomeOperacao.toUpperCase();
+                            let response;
+
+                            if (operationType === 'INVENTÁRIO') {
+                                response = await apiService.finishInventory(
+                                    tenantCode,
+                                    taskData.IdTarefa,
+                                    userId,
+                                    taskData.NomeOperacao
+                                );
+                            } else if (operationType === 'ENDEREÇAMENTO') {
+                                response = await apiService.finishAddressing(
+                                    tenantCode,
+                                    taskData.IdTarefa,
+                                    userId,
+                                    taskData.NomeOperacao
+                                );
+                            } else {
+                                response = await apiService.finishTask(
+                                    tenantCode,
+                                    taskData.IdTarefa,
+                                    userId,
+                                    taskData.NomeOperacao
+                                );
+                            }
+
                             if (response.Ok) {
                                 Alert.alert('Sucesso', 'Tarefa encerrada com sucesso.', [
                                     { text: 'OK', onPress: () => navigation.goBack() }
@@ -157,12 +197,32 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                     onPress: async () => {
                         setIsLoading(true);
                         try {
-                            const response = await apiService.cancelTask(
-                                tenantCode,
-                                taskData.IdTarefa,
-                                userId,
-                                taskData.NomeOperacao
-                            );
+                            const operationType = taskData.NomeOperacao.toUpperCase();
+                            let response;
+
+                            if (operationType === 'INVENTÁRIO') {
+                                response = await apiService.cancelInventory(
+                                    tenantCode,
+                                    taskData.IdTarefa,
+                                    userId,
+                                    taskData.NomeOperacao
+                                );
+                            } else if (operationType === 'ENDEREÇAMENTO') {
+                                response = await apiService.cancelAddressing(
+                                    tenantCode,
+                                    taskData.IdTarefa,
+                                    userId,
+                                    taskData.NomeOperacao
+                                );
+                            } else {
+                                response = await apiService.cancelTask(
+                                    tenantCode,
+                                    taskData.IdTarefa,
+                                    userId,
+                                    taskData.NomeOperacao
+                                );
+                            }
+
                             if (response.Ok) {
                                 Alert.alert('Cancelado', 'Tarefa cancelada com sucesso.', [
                                     { text: 'OK', onPress: () => navigation.goBack() }
@@ -208,7 +268,7 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
     const isPacking = taskData.NomeOperacao.toUpperCase() === 'EMBALAGEM';
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
             {/* Header / Task Description */}
             <View style={styles.header}>
                 <Text style={styles.headerLabel}>Tarefa:</Text>
@@ -222,22 +282,64 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             </View>
 
             {/* Barcode Input */}
-            <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Código de Barras:</Text>
-                <TextInput
-                    ref={inputRef}
-                    style={styles.input}
-                    value={barcode}
-                    onChangeText={setBarcode}
-                    onSubmitEditing={handleBarcodeSubmit}
-                    keyboardType="numeric"
-                    maxLength={13}
-                    placeholder="Ler código..."
-                    placeholderTextColor={COLORS.textLight}
-                    showSoftInputOnFocus={false} // Often desired for hardware scanners, but let's keep visible if soft entry needed? Prompt says "Campo de entrada...".
-                // If hardware scanner sends 'Enter', onSubmitEditing works.
-                />
+            <View style={styles.inputRow}>
+                <View style={styles.inputWrapper}>
+                    <Text style={styles.inputLabel}>Código de Barras:</Text>
+                    <TextInput
+                        ref={inputRef}
+                        style={styles.input}
+                        value={barcode}
+                        onChangeText={setBarcode}
+                        onSubmitEditing={handleBarcodeSubmit}
+                        keyboardType="numeric"
+                        maxLength={13}
+                        placeholder="Ler código ou digitar..."
+                        placeholderTextColor={COLORS.textLight}
+                        showSoftInputOnFocus={true}
+                    />
+                </View>
+                <TouchableOpacity
+                    style={styles.cameraButton}
+                    onPress={() => {
+                        if (!permission?.granted) {
+                            requestPermission();
+                        }
+                        setScanned(false);
+                        setIsCameraVisible(true);
+                        Keyboard.dismiss();
+                    }}
+                >
+                    <Camera color={COLORS.surface} size={24} />
+                </TouchableOpacity>
             </View>
+
+            {/* Camera Overlay */}
+            <Modal visible={isCameraVisible} animationType="slide">
+                <View style={styles.cameraContainer}>
+                    <CameraView
+                        style={styles.camera}
+                        facing="back"
+                        onBarcodeScanned={scanned ? undefined : ({ data }) => {
+                            setScanned(true);
+                            setBarcode(data);
+                            setIsCameraVisible(false);
+                            // Optional: Automatically submit after scan
+                            // setTimeout(handleBarcodeSubmit, 500); 
+                        }}
+                    >
+                        <View style={styles.cameraOverlay}>
+                            <TouchableOpacity
+                                style={styles.closeCameraButton}
+                                onPress={() => setIsCameraVisible(false)}
+                            >
+                                <X color="#FFF" size={32} />
+                            </TouchableOpacity>
+                            <View style={styles.scanFrame} />
+                            <Text style={styles.scanText}>Aponte para o código de barras</Text>
+                        </View>
+                    </CameraView>
+                </View>
+            </Modal>
 
             {/* Message Area */}
             <View style={styles.messageForArea}>
@@ -256,7 +358,7 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             </View>
 
             {/* Footer Buttons */}
-            <View style={styles.footer}>
+            <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SPACING.sm) }]}>
                 <View style={styles.buttonRow}>
                     <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={handlePause}>
                         <Text style={styles.buttonText}>Pausar</Text>
@@ -280,7 +382,7 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                     )}
                 </View>
             </View>
-        </SafeAreaView>
+        </View>
     );
 };
 
@@ -322,13 +424,14 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginTop: SPACING.xs,
     },
-    inputContainer: {
+    inputRow: {
         paddingHorizontal: SPACING.md,
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: SPACING.sm,
     },
-    inputLabel: {
-        fontSize: 14,
-        color: COLORS.text,
-        marginBottom: SPACING.xs,
+    inputWrapper: {
+        flex: 1,
     },
     input: {
         height: 50,
@@ -339,6 +442,52 @@ const styles = StyleSheet.create({
         paddingHorizontal: SPACING.md,
         fontSize: 18,
         color: COLORS.text,
+    },
+    cameraButton: {
+        height: 50,
+        width: 50,
+        backgroundColor: COLORS.secondary,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cameraContainer: {
+        flex: 1,
+        backgroundColor: 'black',
+    },
+    camera: {
+        flex: 1,
+    },
+    cameraOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    closeCameraButton: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        padding: 10,
+        zIndex: 10,
+    },
+    scanFrame: {
+        width: 250,
+        height: 250,
+        borderWidth: 2,
+        borderColor: '#00FF00',
+        backgroundColor: 'transparent',
+    },
+    scanText: {
+        color: 'white',
+        marginTop: 20,
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    inputLabel: {
+        fontSize: 14,
+        color: COLORS.text,
+        marginBottom: SPACING.xs,
     },
     messageForArea: {
         padding: SPACING.md,

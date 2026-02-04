@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { Button } from '../components/Button';
 import { COLORS, SPACING } from '../constants/theme';
-import { PlusCircle } from 'lucide-react-native';
+import { PlusCircle, RefreshCw } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiService, TaskData } from '../services/api';
 import { storageService } from '../services/storage';
 
@@ -13,6 +14,7 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 type Props = NativeStackScreenProps<RootStackParamList, 'TaskList'>;
 
 export const TaskListScreen = ({ navigation, route }: Props) => {
+    const insets = useSafeAreaInsets();
     const [isLoading, setIsLoading] = useState(false);
     const [tenantCode, setTenantCode] = useState('');
     const [userId, setUserId] = useState<number>(0);
@@ -22,15 +24,19 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
         setIsLoading(true);
         try {
             const settings = await storageService.getSettings();
-            if (settings.tenantCodeInput) {
-                setTenantCode(settings.tenantCodeInput);
+            // Use the validated Tenant Code (Hash) if available, otherwise fallback to input
+            // The API requires the Hash for most operations
+            const tCode = settings.validatedTenantCode || settings.tenantCodeInput;
+
+            if (tCode) {
+                setTenantCode(tCode);
             }
             if (settings.userId) {
                 setUserId(settings.userId);
 
                 // If we didn't get tasks from params (or if we want to refresh), fetch them
                 if (!route.params?.tasks || tasks.length === 0) {
-                    await fetchTasks(settings.tenantCodeInput, settings.userId);
+                    await fetchTasks(tCode, settings.userId);
                 }
             }
         } catch (error) {
@@ -114,8 +120,28 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
         );
     };
 
-    const handleGenerateTask = (type: 'INVENTÁRIO' | 'ENDEREÇAMENTO') => {
-        Alert.alert('Aviso', `Gerar tarefa de ${type} não implementado no fluxo atual.`);
+    const handleGenerateTask = async (type: 'INVENTÁRIO' | 'ENDEREÇAMENTO') => {
+        setIsLoading(true);
+        try {
+            const response = type === 'INVENTÁRIO'
+                ? await apiService.createInventory(tenantCode, userId)
+                : await apiService.createAddressing(tenantCode, userId);
+
+            if (response.Ok && response.DadosTarefa) {
+                navigation.navigate('TaskExecution', {
+                    taskData: response.DadosTarefa,
+                    tenantCode: tenantCode,
+                    userId: userId
+                });
+            } else {
+                Alert.alert('Erro', response.MensErro || `Falha ao gerar tarefa de ${type}`);
+            }
+        } catch (error) {
+            Alert.alert('Erro', 'Falha na comunicação com o servidor.');
+            console.error(error);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const renderHeader = () => (
@@ -139,6 +165,15 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
         </View>
     );
 
+    const handleRefresh = async () => {
+        setIsLoading(true);
+        try {
+            await fetchTasks(tenantCode, userId);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     // Adapt TaskData to the visualization expected by TaskCard?
     // Or update TaskCard. For now, let's map on the fly or update TaskCard later.
     // The current TaskCard expects { id, title, type, status, priority }.
@@ -146,7 +181,7 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
     // We will do a quick mapping here for the renderItem.
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Tarefas</Text>
             </View>
@@ -183,16 +218,22 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
                 showsVerticalScrollIndicator={false}
             />
 
-            <View style={styles.footer}>
-                {/* Simplified footer options */}
+            <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SPACING.md) }]}>
                 <Button
-                    title="Sair do Coletor"
+                    title="Atualizar"
+                    variant="secondary"
+                    onPress={handleRefresh}
+                    style={{ flex: 1, marginRight: SPACING.sm }}
+                    icon={<RefreshCw size={20} color={COLORS.primary} />}
+                />
+                <Button
+                    title="Sair"
                     variant="danger"
                     onPress={handleLogout}
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, marginLeft: SPACING.sm }}
                 />
             </View>
-        </SafeAreaView>
+        </View>
     );
 };
 
