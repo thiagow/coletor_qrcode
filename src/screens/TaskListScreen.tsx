@@ -8,6 +8,7 @@ import { PlusCircle, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiService, TaskData } from '../services/api';
 import { storageService } from '../services/storage';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -19,6 +20,16 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
     const [tenantCode, setTenantCode] = useState('');
     const [userId, setUserId] = useState<number>(0);
     const [tasks, setTasks] = useState<TaskData[]>(route.params?.tasks || []);
+
+    // Modal State
+    const [modalVisible, setModalVisible] = useState(false);
+    const [modalConfig, setModalConfig] = useState({
+        title: '',
+        message: '',
+        type: 'default' as 'default' | 'danger' | 'success',
+        confirmText: 'Confirmar',
+        action: null as 'LOGOUT' | null
+    });
 
     const loadSettingsAndTasks = useCallback(async () => {
         setIsLoading(true);
@@ -94,30 +105,46 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
         }
     };
 
-    const handleLogout = async () => {
-        Alert.alert(
+    const showModal = (
+        title: string,
+        message: string,
+        action: 'LOGOUT',
+        type: 'default' | 'danger' | 'success' = 'default',
+        confirmText: string = 'Sim'
+    ) => {
+        setModalConfig({ title, message, action, type, confirmText });
+        setModalVisible(true);
+    };
+
+    const handleConfirmAction = async () => {
+        setModalVisible(false);
+        const { action } = modalConfig;
+
+        if (action === 'LOGOUT') await executeLogout();
+    };
+
+    const handleLogout = () => {
+        showModal(
             'Sair',
             'Deseja realmente sair do coletor?',
-            [
-                { text: 'Não', style: 'cancel' },
-                {
-                    text: 'Sim',
-                    onPress: async () => {
-                        setIsLoading(true);
-                        try {
-                            await apiService.logout(tenantCode, userId);
-                            // Clear user session if needed, or just navigate back
-                            navigation.replace('Login');
-                        } catch (error) {
-                            Alert.alert('Erro', 'Erro ao realizar logout');
-                            navigation.replace('Login'); // Force exit anyway?
-                        } finally {
-                            setIsLoading(false);
-                        }
-                    }
-                }
-            ]
+            'LOGOUT',
+            'danger',
+            'Sim, Sair'
         );
+    };
+
+    const executeLogout = async () => {
+        setIsLoading(true);
+        try {
+            await apiService.logout(tenantCode, userId);
+            // Clear user session if needed, or just navigate back
+            navigation.replace('Login');
+        } catch (error) {
+            Alert.alert('Erro', 'Erro ao realizar logout');
+            navigation.replace('Login'); // Force exit anyway?
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const handleGenerateTask = async (type: 'INVENTÁRIO' | 'ENDEREÇAMENTO') => {
@@ -174,12 +201,6 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
         }
     };
 
-    // Adapt TaskData to the visualization expected by TaskCard?
-    // Or update TaskCard. For now, let's map on the fly or update TaskCard later.
-    // The current TaskCard expects { id, title, type, status, priority }.
-    // Our TaskData has { IdTarefa, DescrTarefa, NomeOperacao, StatusTarefa ... }
-    // We will do a quick mapping here for the renderItem.
-
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
@@ -216,6 +237,17 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
                 ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 20, color: '#666' }}>Nenhuma tarefa disponível.</Text>}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
+            />
+
+            {/* Confirmation Modal */}
+            <ConfirmationModal
+                visible={modalVisible}
+                title={modalConfig.title}
+                message={modalConfig.message}
+                type={modalConfig.type}
+                confirmText={modalConfig.confirmText}
+                onConfirm={handleConfirmAction}
+                onCancel={() => setModalVisible(false)}
             />
 
             <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SPACING.md) }]}>

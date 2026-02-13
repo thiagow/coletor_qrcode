@@ -5,19 +5,19 @@ import {
     StyleSheet,
     TextInput,
     TouchableOpacity,
-    Alert,
     ActivityIndicator,
     Keyboard,
     Modal
 } from 'react-native';
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../constants/theme';
-import { Camera, X } from 'lucide-react-native';
+import { Camera, X, CheckCircle } from 'lucide-react-native';
 import { apiService, TaskData } from '../services/api';
-import { storageService } from '../services/storage';
+import { normalizeString } from '../utils/helpers';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 
 type RootStackParamList = {
     Login: undefined;
@@ -25,7 +25,7 @@ type RootStackParamList = {
     TaskExecution: {
         taskData: TaskData;
         tenantCode: string;
-        userId: number; // Assuming we have userId
+        userId: number;
     };
 };
 
@@ -36,6 +36,8 @@ interface Props {
     route: TaskExecutionScreenRouteProp;
     navigation: TaskExecutionScreenNavigationProp;
 }
+
+type ModalActionType = 'PAUSE' | 'FINISH' | 'CANCEL' | null;
 
 export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
     const insets = useSafeAreaInsets();
@@ -49,17 +51,53 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
     const [scanned, setScanned] = useState(false);
     const inputRef = useRef<TextInput>(null);
 
+    // Modal State
+    const [modalVisible, setModalVisible] = useState(false);
+    const [modalConfig, setModalConfig] = useState({
+        title: '',
+        message: '',
+        type: 'default' as 'default' | 'danger' | 'success',
+        confirmText: 'Confirmar',
+        action: null as ModalActionType
+    });
+
+    // Task Finished State (to show success screen instead of going back)
+    const [isTaskFinished, setIsTaskFinished] = useState(false);
+    const [finishedMessage, setFinishedMessage] = useState('');
+
     useEffect(() => {
-        // Focus input on mount and keep it focused
         const focusInput = () => {
-            inputRef.current?.focus();
+            // Only focus if not finished and not in camera/modal
+            if (!isTaskFinished && !isCameraVisible && !modalVisible) {
+                inputRef.current?.focus();
+            }
         };
 
         const unsubscribe = navigation.addListener('focus', focusInput);
-        setTimeout(focusInput, 500); // Initial delay
+        setTimeout(focusInput, 500);
 
         return unsubscribe;
-    }, [navigation]);
+    }, [navigation, isTaskFinished, isCameraVisible, modalVisible]);
+
+    const showModal = (
+        title: string,
+        message: string,
+        action: ModalActionType,
+        type: 'default' | 'danger' | 'success' = 'default',
+        confirmText: string = 'Sim'
+    ) => {
+        setModalConfig({ title, message, action, type, confirmText });
+        setModalVisible(true);
+    };
+
+    const handleConfirmAction = async () => {
+        setModalVisible(false);
+        const { action } = modalConfig;
+
+        if (action === 'PAUSE') await executePause();
+        if (action === 'CANCEL') await executeCancel();
+        if (action === 'FINISH') await executeFinish();
+    };
 
     const handleBarcodeSubmit = async () => {
         if (!barcode.trim()) return;
@@ -85,18 +123,51 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                     text: response.MensErro || 'Erro desconhecido',
                     isError: true
                 });
-                setBarcode(''); // Clear even on error? Usually yes for rapid scanning
+                setBarcode('');
             }
         } catch (error) {
             setMessage({ text: 'Erro de comunicação', isError: true });
         } finally {
             setIsLoading(false);
-            // Refocus
             setTimeout(() => inputRef.current?.focus(), 100);
         }
     };
 
-    const handlePause = async () => {
+    // --- ACTIONS HANDLERS (Open Modals) ---
+
+    const handlePause = () => {
+        showModal(
+            'Pausar Tarefa',
+            'Deseja realmente pausar esta tarefa?',
+            'PAUSE',
+            'default',
+            'Sim, Pausar'
+        );
+    };
+
+    const handleFinishTask = () => {
+        showModal(
+            'Encerrar Tarefa',
+            'Deseja realmente encerrar esta tarefa?',
+            'FINISH',
+            'success',
+            'Sim, Encerrar'
+        );
+    };
+
+    const handleCancelTask = () => {
+        showModal(
+            'Cancelar Tarefa',
+            'ATENÇÃO: Deseja realmente cancelar esta tarefa?',
+            'CANCEL',
+            'danger',
+            'Sim, Cancelar'
+        );
+    };
+
+    // --- EXECUTION LOGIC ---
+
+    const executePause = async () => {
         setIsLoading(true);
         try {
             const response = await apiService.pauseTask(
@@ -107,18 +178,10 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             );
 
             if (response.Ok) {
-                // Fetch updated tasks before navigating back
                 const tasksResponse = await apiService.getOpenTasks(tenantCode, userId);
-
-                // Reset navigation to TaskList with updated tasks
                 navigation.reset({
                     index: 0,
-                    routes: [
-                        {
-                            name: 'TaskList',
-                            params: { tasks: tasksResponse.TarefasLivres || [] }
-                        },
-                    ],
+                    routes: [{ name: 'TaskList', params: { tasks: tasksResponse.TarefasLivres || [] } }],
                 });
             } else {
                 setMessage({ text: response.MensErro || 'Erro ao pausar', isError: true });
@@ -131,114 +194,65 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     };
 
-    const handleFinishTask = () => {
-        Alert.alert(
-            'Confirmar Encerramento',
-            'Deseja realmente encerrar esta tarefa?',
-            [
-                { text: 'Não', style: 'cancel' },
-                {
-                    text: 'Sim',
-                    onPress: async () => {
-                        setIsLoading(true);
-                        try {
-                            const operationType = taskData.NomeOperacao.toUpperCase();
-                            let response;
+    const executeFinish = async () => {
+        setIsLoading(true);
+        try {
+            const operationType = normalizeString(taskData.NomeOperacao);
+            console.log('Finishing Task - Type:', operationType);
+            let response;
 
-                            if (operationType === 'INVENTÁRIO') {
-                                response = await apiService.finishInventory(
-                                    tenantCode,
-                                    taskData.IdTarefa,
-                                    userId,
-                                    taskData.NomeOperacao
-                                );
-                            } else if (operationType === 'ENDEREÇAMENTO') {
-                                response = await apiService.finishAddressing(
-                                    tenantCode,
-                                    taskData.IdTarefa,
-                                    userId,
-                                    taskData.NomeOperacao
-                                );
-                            } else {
-                                response = await apiService.finishTask(
-                                    tenantCode,
-                                    taskData.IdTarefa,
-                                    userId,
-                                    taskData.NomeOperacao
-                                );
-                            }
+            if (operationType === 'INVENTARIO') {
+                response = await apiService.finishInventory(tenantCode, taskData.IdTarefa, userId, taskData.NomeOperacao);
+            } else if (operationType === 'ENDERECAMENTO') {
+                response = await apiService.finishAddressing(tenantCode, taskData.IdTarefa, userId, taskData.NomeOperacao);
+            } else {
+                response = await apiService.finishTask(tenantCode, taskData.IdTarefa, userId, taskData.NomeOperacao);
+            }
 
-                            if (response.Ok) {
-                                Alert.alert('Sucesso', 'Tarefa encerrada com sucesso.', [
-                                    { text: 'OK', onPress: () => navigation.goBack() }
-                                ]);
-                            } else {
-                                setMessage({ text: response.MensErro || 'Erro ao encerrar', isError: true });
-                            }
-                        } catch (error) {
-                            setMessage({ text: 'Erro de comunicação', isError: true });
-                        } finally {
-                            setIsLoading(false);
-                        }
-                    }
-                }
-            ]
-        );
+            if (response.Ok) {
+                // SUCCESS: Stay on screen, show back button
+                setIsTaskFinished(true);
+                setFinishedMessage(response.MensErro || 'Tarefa encerrada com sucesso!');
+                // Note: API often sends success message in MensErro oddly enough, or we use a default
+            } else {
+                setMessage({ text: response.MensErro || 'Erro ao encerrar tarefa', isError: true });
+            }
+        } catch (error) {
+            setMessage({ text: 'Erro de comunicação', isError: true });
+        } finally {
+            setIsLoading(false);
+        }
     };
 
-    const handleCancelTask = () => {
-        Alert.alert(
-            'Confirmar Cancelamento',
-            'Deseja realmente cancelar esta tarefa?',
-            [
-                { text: 'Não', style: 'cancel' },
-                {
-                    text: 'Sim', style: 'destructive',
-                    onPress: async () => {
-                        setIsLoading(true);
-                        try {
-                            const operationType = taskData.NomeOperacao.toUpperCase();
-                            let response;
+    const executeCancel = async () => {
+        setIsLoading(true);
+        try {
+            const operationType = normalizeString(taskData.NomeOperacao);
+            console.log('Canceling Task - Type:', operationType);
+            let response;
 
-                            if (operationType === 'INVENTÁRIO') {
-                                response = await apiService.cancelInventory(
-                                    tenantCode,
-                                    taskData.IdTarefa,
-                                    userId,
-                                    taskData.NomeOperacao
-                                );
-                            } else if (operationType === 'ENDEREÇAMENTO') {
-                                response = await apiService.cancelAddressing(
-                                    tenantCode,
-                                    taskData.IdTarefa,
-                                    userId,
-                                    taskData.NomeOperacao
-                                );
-                            } else {
-                                response = await apiService.cancelTask(
-                                    tenantCode,
-                                    taskData.IdTarefa,
-                                    userId,
-                                    taskData.NomeOperacao
-                                );
-                            }
+            if (operationType === 'INVENTARIO') {
+                response = await apiService.cancelInventory(tenantCode, taskData.IdTarefa, userId, taskData.NomeOperacao);
+            } else if (operationType === 'ENDERECAMENTO') {
+                response = await apiService.cancelAddressing(tenantCode, taskData.IdTarefa, userId, taskData.NomeOperacao);
+            } else {
+                response = await apiService.cancelTask(tenantCode, taskData.IdTarefa, userId, taskData.NomeOperacao);
+            }
 
-                            if (response.Ok) {
-                                Alert.alert('Cancelado', 'Tarefa cancelada com sucesso.', [
-                                    { text: 'OK', onPress: () => navigation.goBack() }
-                                ]);
-                            } else {
-                                setMessage({ text: response.MensErro || 'Erro ao cancelar', isError: true });
-                            }
-                        } catch (error) {
-                            setMessage({ text: 'Erro de comunicação', isError: true });
-                        } finally {
-                            setIsLoading(false);
-                        }
-                    }
-                }
-            ]
-        );
+            if (response.Ok) {
+                const tasksResponse = await apiService.getOpenTasks(tenantCode, userId);
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'TaskList', params: { tasks: tasksResponse.TarefasLivres || [] } }],
+                });
+            } else {
+                setMessage({ text: response.MensErro || 'Erro ao cancelar', isError: true });
+            }
+        } catch (error) {
+            setMessage({ text: 'Erro de comunicação', isError: true });
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const handleNewBox = async () => {
@@ -250,8 +264,10 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                 userId,
                 taskData.NomeOperacao
             );
-            if (response.Ok && response.DadosTarefa) {
-                setTaskData(response.DadosTarefa);
+            if (response.Ok) {
+                if (response.DadosTarefa) {
+                    setTaskData(response.DadosTarefa);
+                }
                 setMessage({ text: 'NOVA CAIXA GERADA', isError: false });
             } else {
                 setMessage({ text: response.MensErro || 'Erro ao gerar caixa', isError: true });
@@ -264,15 +280,34 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     };
 
-    const isInventoryOrAddress = ['INVENTÁRIO', 'ENDEREÇAMENTO'].includes(taskData.NomeOperacao.toUpperCase());
-    const isPacking = taskData.NomeOperacao.toUpperCase() === 'EMBALAGEM';
+    const opTypeNormalized = normalizeString(taskData.NomeOperacao);
+    const isInventoryOrAddress = ['INVENTARIO', 'ENDERECAMENTO'].includes(opTypeNormalized);
+    const isPacking = opTypeNormalized === 'EMBALAGEM';
+
+    // Se tarefa finalizou, mostra tela de sucesso
+    if (isTaskFinished) {
+        return (
+            <View style={[styles.container, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', padding: SPACING.lg }]}>
+                <CheckCircle color={COLORS.success} size={80} style={{ marginBottom: SPACING.lg }} />
+                <Text style={styles.finishedTitle}>Tarefa Encerrada!</Text>
+                <Text style={styles.finishedMessage}>{finishedMessage}</Text>
+
+                <TouchableOpacity
+                    style={[styles.button, styles.primaryButton, { width: '100%', marginTop: SPACING.xl }]}
+                    onPress={() => navigation.goBack()}
+                >
+                    <Text style={styles.buttonText}>Voltar para o Início</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             {/* Header / Task Description */}
             <View style={styles.header}>
                 <Text style={styles.headerLabel}>Tarefa:</Text>
-                <Text style={styles.headerText}>{taskData.DescrTarefa}</Text>
+                <Text style={styles.headerText}>#{taskData.IdTarefa} - {taskData.DescrTarefa}</Text>
             </View>
 
             {/* Instruction */}
@@ -313,7 +348,6 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                 </TouchableOpacity>
             </View>
 
-            {/* Camera Overlay */}
             <Modal visible={isCameraVisible} animationType="slide">
                 <View style={styles.cameraContainer}>
                     <CameraView
@@ -323,8 +357,6 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                             setScanned(true);
                             setBarcode(data);
                             setIsCameraVisible(false);
-                            // Optional: Automatically submit after scan
-                            // setTimeout(handleBarcodeSubmit, 500); 
                         }}
                     >
                         <View style={styles.cameraOverlay}>
@@ -340,6 +372,17 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
                     </CameraView>
                 </View>
             </Modal>
+
+            {/* Notification Modal */}
+            <ConfirmationModal
+                visible={modalVisible}
+                title={modalConfig.title}
+                message={modalConfig.message}
+                type={modalConfig.type}
+                confirmText={modalConfig.confirmText}
+                onConfirm={handleConfirmAction}
+                onCancel={() => setModalVisible(false)}
+            />
 
             {/* Message Area */}
             <View style={styles.messageForArea}>
@@ -360,9 +403,15 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             {/* Footer Buttons */}
             <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SPACING.sm) }]}>
                 <View style={styles.buttonRow}>
-                    <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={handlePause}>
-                        <Text style={styles.buttonText}>Pausar</Text>
-                    </TouchableOpacity>
+                    {!taskData.FlEncerrada ? (
+                        <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={handlePause}>
+                            <Text style={styles.buttonText}>Pausar</Text>
+                        </TouchableOpacity>
+                    ) : (
+                        <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={() => navigation.goBack()}>
+                            <Text style={styles.buttonText}>Voltar</Text>
+                        </TouchableOpacity>
+                    )}
 
                     {isInventoryOrAddress && (
                         <>
@@ -409,7 +458,7 @@ const styles = StyleSheet.create({
     },
     instructionContainer: {
         padding: SPACING.md,
-        backgroundColor: '#e3f2fd', // Light blue for instruction
+        backgroundColor: '#e3f2fd',
         margin: SPACING.md,
         borderRadius: 8,
     },
@@ -528,9 +577,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     pauseButton: {
-        backgroundColor: '#fbc02d', // Yellow/Orange
+        backgroundColor: '#fbc02d',
     },
     actionButton: {
+        backgroundColor: COLORS.primary,
+    },
+    primaryButton: {
         backgroundColor: COLORS.primary,
     },
     cancelButton: {
@@ -541,4 +593,15 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: 14,
     },
+    finishedTitle: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: COLORS.text,
+        marginBottom: SPACING.sm,
+    },
+    finishedMessage: {
+        fontSize: 16,
+        color: COLORS.textLight,
+        textAlign: 'center',
+    }
 });
