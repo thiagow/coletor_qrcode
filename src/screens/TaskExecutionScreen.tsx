@@ -210,10 +210,9 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             }
 
             if (response.Ok) {
-                // SUCCESS: Stay on screen, show back button
+                // SUCCESS: Stay on same screen, show success message and only Voltar button
                 setIsTaskFinished(true);
                 setFinishedMessage(response.MensErro || 'Tarefa encerrada com sucesso!');
-                // Note: API often sends success message in MensErro oddly enough, or we use a default
             } else {
                 setMessage({ text: response.MensErro || 'Erro ao encerrar tarefa', isError: true });
             }
@@ -221,6 +220,22 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             setMessage({ text: 'Erro de comunicação', isError: true });
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleGoBackToTaskList = async () => {
+        try {
+            const tasksResponse = await apiService.getOpenTasks(tenantCode, userId);
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'TaskList', params: { tasks: tasksResponse.TarefasLivres || [] } }],
+            });
+        } catch (error) {
+            // Mesmo com erro, navega para TaskList sem dados
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'TaskList' }],
+            });
         }
     };
 
@@ -284,23 +299,6 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
     const isInventoryOrAddress = ['INVENTARIO', 'ENDERECAMENTO'].includes(opTypeNormalized);
     const isPacking = opTypeNormalized === 'EMBALAGEM';
 
-    // Se tarefa finalizou, mostra tela de sucesso
-    if (isTaskFinished) {
-        return (
-            <View style={[styles.container, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', padding: SPACING.lg }]}>
-                <CheckCircle color={COLORS.success} size={80} style={{ marginBottom: SPACING.lg }} />
-                <Text style={styles.finishedTitle}>Tarefa Encerrada!</Text>
-                <Text style={styles.finishedMessage}>{finishedMessage}</Text>
-
-                <TouchableOpacity
-                    style={[styles.button, styles.primaryButton, { width: '100%', marginTop: SPACING.xl }]}
-                    onPress={() => navigation.goBack()}
-                >
-                    <Text style={styles.buttonText}>Voltar para o Início</Text>
-                </TouchableOpacity>
-            </View>
-        );
-    }
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -388,6 +386,12 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             <View style={styles.messageForArea}>
                 {isLoading ? (
                     <ActivityIndicator color={COLORS.primary} size="large" />
+                ) : isTaskFinished ? (
+                    <View style={styles.finishedContainer}>
+                        <CheckCircle color={COLORS.success} size={48} style={{ marginBottom: SPACING.sm }} />
+                        <Text style={styles.finishedTitle}>Tarefa Encerrada!</Text>
+                        <Text style={styles.finishedMessage}>{finishedMessage}</Text>
+                    </View>
                 ) : (
                     message && (
                         <Text style={[
@@ -403,31 +407,42 @@ export const TaskExecutionScreen: React.FC<Props> = ({ route, navigation }) => {
             {/* Footer Buttons */}
             <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SPACING.sm) }]}>
                 <View style={styles.buttonRow}>
-                    {!taskData.FlEncerrada ? (
-                        <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={handlePause}>
-                            <Text style={styles.buttonText}>Pausar</Text>
-                        </TouchableOpacity>
-                    ) : (
-                        <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={() => navigation.goBack()}>
+                    {isTaskFinished ? (
+                        <TouchableOpacity
+                            style={[styles.button, styles.actionButton, { flex: 1 }]}
+                            onPress={handleGoBackToTaskList}
+                        >
                             <Text style={styles.buttonText}>Voltar</Text>
                         </TouchableOpacity>
-                    )}
-
-                    {isInventoryOrAddress && (
+                    ) : (
                         <>
-                            <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={handleFinishTask}>
-                                <Text style={styles.buttonText}>Encerrar</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancelTask}>
-                                <Text style={styles.buttonText}>Cancelar</Text>
-                            </TouchableOpacity>
-                        </>
-                    )}
+                            {!taskData.FlEncerrada ? (
+                                <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={handlePause}>
+                                    <Text style={styles.buttonText}>Pausar</Text>
+                                </TouchableOpacity>
+                            ) : (
+                                <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={handleGoBackToTaskList}>
+                                    <Text style={styles.buttonText}>Voltar</Text>
+                                </TouchableOpacity>
+                            )}
 
-                    {isPacking && (
-                        <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={handleNewBox}>
-                            <Text style={styles.buttonText}>Nova Caixa</Text>
-                        </TouchableOpacity>
+                            {isInventoryOrAddress && (
+                                <>
+                                    <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={handleFinishTask}>
+                                        <Text style={styles.buttonText}>Encerrar</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancelTask}>
+                                        <Text style={styles.buttonText}>Cancelar</Text>
+                                    </TouchableOpacity>
+                                </>
+                            )}
+
+                            {isPacking && (
+                                <TouchableOpacity style={[styles.button, styles.actionButton]} onPress={handleNewBox}>
+                                    <Text style={styles.buttonText}>Nova Caixa</Text>
+                                </TouchableOpacity>
+                            )}
+                        </>
                     )}
                 </View>
             </View>
@@ -593,14 +608,19 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: 14,
     },
+    finishedContainer: {
+        alignItems: 'center',
+        paddingVertical: SPACING.sm,
+    },
     finishedTitle: {
-        fontSize: 24,
+        fontSize: 20,
         fontWeight: 'bold',
-        color: COLORS.text,
-        marginBottom: SPACING.sm,
+        color: COLORS.success,
+        marginBottom: SPACING.xs,
+        textAlign: 'center',
     },
     finishedMessage: {
-        fontSize: 16,
+        fontSize: 14,
         color: COLORS.textLight,
         textAlign: 'center',
     }

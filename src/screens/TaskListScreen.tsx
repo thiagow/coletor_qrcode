@@ -19,6 +19,7 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
     const [isLoading, setIsLoading] = useState(false);
     const [tenantCode, setTenantCode] = useState('');
     const [userId, setUserId] = useState<number>(0);
+    const [userName, setUserName] = useState('');
     const [tasks, setTasks] = useState<TaskData[]>(route.params?.tasks || []);
 
     // Modal State
@@ -44,6 +45,9 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
             }
             if (settings.userId) {
                 setUserId(settings.userId);
+                if (settings.userName) {
+                    setUserName(settings.userName);
+                }
 
                 // If we didn't get tasks from params (or if we want to refresh), fetch them
                 if (!route.params?.tasks || tasks.length === 0) {
@@ -208,7 +212,7 @@ export const TaskListScreen = ({ navigation, route }: Props) => {
             </View>
 
             <View style={styles.tenantBar}>
-                <Text style={styles.tenantText}>Tenant: {tenantCode} | Usuário: {userId}</Text>
+                <Text style={styles.tenantText}>Usuário: {userName || userId}</Text>
             </View>
 
             {isLoading && (
@@ -293,9 +297,9 @@ const styles = StyleSheet.create({
         borderBottomColor: COLORS.border,
     },
     tenantText: {
-        color: COLORS.textLight,
-        fontSize: 12,
-        fontWeight: '600',
+        color: COLORS.text,
+        fontSize: 14,
+        fontWeight: 'bold',
     },
     listContent: {
         padding: SPACING.md,

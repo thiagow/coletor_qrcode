@@ -5,6 +5,7 @@ const KEYS = {
     TENANT_CODE_INPUT: '@tenantCodeInput',
     VALIDATED_TENANT_CODE: '@validatedTenantCode',
     USER_ID: '@userId',
+    USER_NAME: '@userName',
 };
 
 export const storageService = {
@@ -38,13 +39,23 @@ export const storageService = {
         }
     },
 
+    saveUserName: async (name: string) => {
+        try {
+            await AsyncStorage.setItem(KEYS.USER_NAME, name);
+        } catch (e) {
+            console.error('Failed to save user name', e);
+            throw e;
+        }
+    },
+
     getSettings: async () => {
         try {
             const values = await AsyncStorage.multiGet([
                 KEYS.URL_APIS,
                 KEYS.TENANT_CODE_INPUT,
                 KEYS.VALIDATED_TENANT_CODE,
-                KEYS.USER_ID
+                KEYS.USER_ID,
+                KEYS.USER_NAME
             ]);
 
             return {
@@ -52,10 +63,11 @@ export const storageService = {
                 tenantCodeInput: values[1][1] || '',
                 validatedTenantCode: values[2][1] || '',
                 userId: values[3][1] ? parseInt(values[3][1], 10) : 0,
+                userName: values[4][1] || '',
             };
         } catch (e) {
             console.error('Failed to get settings', e);
-            return { urlApis: '', tenantCodeInput: '', validatedTenantCode: '', userId: 0 };
+            return { urlApis: '', tenantCodeInput: '', validatedTenantCode: '', userId: 0, userName: '' };
         }
     }
 };

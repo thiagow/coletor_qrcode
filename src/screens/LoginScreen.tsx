@@ -35,6 +35,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
                 // Save session info
                 if (response.IdUsuario) {
                     await storageService.saveUserId(response.IdUsuario);
+                    if (response.ApelidoFuncionario) {
+                        await storageService.saveUserName(response.ApelidoFuncionario);
+                    }
                 }
 
                 // If there's an active task (checking IdTarefa to ensure it's not empty object), go straight to execution
